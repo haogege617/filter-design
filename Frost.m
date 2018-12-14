@@ -1,0 +1,106 @@
+%Define a Uniform Linear Array 
+%First we define a uniform linear array (ULA) to receive the signal. 
+%The array contains 10 omnidirectional microphones and the element spacing is 5 cm
+clc
+close all;
+hmic=phased.OmnidirectionalMicrophoneElement;
+ha=phased.ULA(4,0.05,'Element',hmic);
+c=340;                                       %sound speed,in m/s
+
+%Simulate the Received Signals
+load('twospeeches','speech1','speech2');
+load('laughter','y');                       %The laughter is stored in variable y
+y=2*y(1:length(speech1));                   %Amplify and truncate
+fs=8192;                                    %in Hz
+
+audiowrite('speech1.wav',speech1,fs);
+audiowrite('speech2.wav',speech2,fs);
+ang1=[-30;0];
+ang2=[60;10];
+angInt=[20;0];
+
+hCollector=phased.WidebandCollector('Sensor',ha,'PropagationSpeed',c,...
+    'SampleRate',fs,'NumSubbands',4096,'ModulatedInput',0);
+ sigSource=step(hCollector,[speech1 speech2 y],[ang1 ang2 angInt]);
+ 
+ rs=RandStream.create('mt19937ar','Seed',2008);
+ noisePwr=1e-4;                              %noise power
+ sigNoise=sqrt(noisePwr)*randn(rs,size(sigSource));
+ 
+ sigArray=sigSource+sigNoise;
+ audiowrite('sigArray.wav',sigArray(:,3),fs);
+ 
+ %Plot channel 3
+ plot(sigArray(:,3));
+ xlabel('Time(sec)');ylabel('Amplitude(V)');
+ title('Signal Received at Channal 3');ylim([-3 3]);
+ 
+ %Listen to channal 3
+ player=audioplayer(sigArray(:,3),fs);
+ play(player);
+ 
+ %Process with a Time Delay Beamformer
+ angSteer=ang1;
+ hbf=phased.TimeDelayBeamformer('SensorArray',ha,'SampleRate',fs,...
+     'Direction',angSteer,'PropagationSpeed',c);
+ 
+ cbfOut=step(hbf,sigArray);
+ 
+ plot(cbfOut);
+ xlabel('Time(Sec)');ylabel('Amplitude(V)');
+ title('Time Delay Beamformer Output');ylim([-3 3]);
+ 
+ player=audioplayer(cbfOut,fs);
+ play(player);
+ 
+ agCbf=pow2db(mean((speech2+y).^2+noisePwr)/mean((cbfOut-speech1).^2));
+ 
+ %Process with a Frost Beamdormer
+ hbf=phased.FrostBeamformer('SensorArray',ha,'SampleRate',fs,...
+     'PropagationSpeed',c,'WeightsOutputPort',true);
+ %The beamformer may change its steering direction during processing
+ hbf.DirectionSource='Input port';
+ hbf.FilterLength=20;    %Set the length of FIR filter for each sensor to 20
+ 
+ [FrostOut,w]=step(hbf,sigArray,ang1);
+ 
+ plot(FrostOut);
+ xlabel('Time(sec)');ylabel('Amplitude(V)');
+ title('Frost Beamformer Output');ylim([-3 3]);
+ 
+ player=audioplayer(FrostOut,fs);
+ play(player);
+ 
+ agFrost=pow2db(mean((speech2+y).^2+noisePwr)/mean((FrostOut-speech1).^2));
+ 
+ %Use Diagonal Loading to Improve Robustness to the Frost Beamformer
+ release(hbf);
+ dir2=[50;20];               %Estimated steering direction
+ FrostOut=step(hbf,sigArray,dir2);
+ 
+ plot(FrostOut);
+ xlabel('Time(sec)');ylabel('Amplitude(V)');
+ title('Frost Beamformer Output');ylim([-3 3]);
+ 
+ player=audioplayer(FrostOut,fs);
+ play(player);
+ 
+ agFrost2=pow2db(mean((speech1+y).^2+noisePwr)/mean((FrostOut-speech2).^2));
+ 
+ release(hbf);
+ hbf.DiagonalLoadingFactor=1e-3;    %Specify diagonal loading value
+ FrostOut=step(hbf,sigArray,dir2);
+ 
+ plot(FrostOut);
+ xlabel('Time(sec)');ylabel('Amplitude(V)');
+ title('Frost Beamformer Output');ylim([-3 3]);
+ 
+ player=audioplayer(FrostOut,fs);
+ play(player);
+ 
+ agFrostDL=pow2db(mean((speech1+y).^2+noisePwr)/mean((FrostOut-speech2).^2));
+
+% 作者：叶夜笙歌 
+% 来源：CSDN 
+% 原文：https://blog.csdn.net/YJJat1989/article/details/22398831 
+% 版权声明：本文为博主原创文章，转载请附上博文链接！
